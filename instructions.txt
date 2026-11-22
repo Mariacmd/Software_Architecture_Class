@@ -1,0 +1,65 @@
+This project is required for all students. You can work individually or form a team of 3 team members maximum.
+
+In this project, you are required to design DriveShare - Peer-to-Peer Car Rental Platform. DriveShare is a standalond or web or mobile platform designed to connect car owners with individuals seeking short-term car rentals. The platform aims to provide a convenient and efficient solution for users to rent personal vehicles directly from their owners. DriveShare facilitates listing, searching, transactions and enhances user communication to ensure a seamless car-sharing experience. Use Turo.com as an example.
+
+Functions/Features
+
+    User Registration and Authentication:
+        Users can register on DriveShare using email and password authentication.
+        During registration, users must set three security questions (with answers).
+    Car Listing and Management (Owner):
+        Car owners can list their vehicles for short-term rental, providing details such as car model, year, mileage, availability calendar, pick up location and rental pricing.
+        Owners have the ability to manage their car listings, including updating availability and price
+        The system must prevent the same car from being rented by more than one renter for overlapping dates/times.
+    Search and Booking (Renter):
+        Renters can search for available cars based on location, date, and other preferences (your choice).
+        Renters can “watch” desired cars and receive notification when the car becomes available and/or rental prices drop to meet renter-defined specifications
+        Implement a booking system allowing renters to reserve a car for a specific period.
+    Messaging and Communication:
+        DriveShare includes a messaging system to facilitate communication between car owners and renters.
+        Send notifications for booking requests, confirmations, and important updates via email or in-app messages.
+    Payment:
+        Allow renters to make payment (A real payment is not required. A payment button with amount is enough, clicking on the button will change the balance and send notification to both owner and renter)
+    Rental History (optional for working on the project alone)
+        Both car owners and renters can view their rental history.
+    Reviews: (optional for working on the project alone)
+        Implement a review and rating system for both owner and renter to provide feedback on the rental experience.
+
+Implementation
+
+    User Authentication and Encryption:
+        Implement the Singleton pattern to manage the user's session securely.
+    Observer Pattern for Booking Notifications:
+        Apply the Observer pattern to notify renters if their watched cars meet their expectations.
+    Mediator Pattern for UI Components:
+        Implement the Mediator pattern to manage communication between different UI components, creating a cohesive and user-friendly interface.
+    Builder Pattern for Car Listing Creation:
+        Use the Builder pattern to construct car listing objects with optional/variable attributes cleanly
+    Proxy Pattern for Payment Integration:
+        Use the Proxy pattern to simulate secure interaction between DriveShare and the payment system.
+    Chain of Responsibility for Password Recovery:
+        Apply the Chain of Responsibility pattern to create a secure process (using three security questions to build the chain) for recovering a forgotten password.
+
+
+
+    Term Project Presentation
+        Each team only pre-record ONE video that incorporates everyone's contribution.
+        Program Demonstration: Begin your presentation by running the program and demonstrating all the features you have implemented.
+        Design Explanation: After the demonstration, explain the design patterns used in your project and how they integrate into the overall design.
+        Group Contributions:
+            In a group project setting, I expect everyone to contribute to the design and implementation.
+            Each team member must choose one section of code that relates to the design pattern and explain his/her implementation during the presentation.
+            For students working individually, you don’t have to explain all patterns in source code level, you may choose one or two patterns to explain in detail source code level.
+            Task Summary: Include a slide or two in your presentation listing all the tasks completed and specifying who was involved in each task. (this part is optional for students working alone)
+        Submission Requirements:
+            It is not necessary for each team member to submit to Canvas. Only one member should submit the following:
+            A one-page report containing:
+                Team members' names
+                GitHub repository URL
+                Video presentation URL
+            Ensure all source codes, presentation slides, and related documents are uploaded to the GitHub repository. A report that includes class diagrams and their descriptions, database schema and descriptions, user-interface screen shots must be provided in the repository.
+            The repository should be made public or shared with me zwxu@umich.edu as collaborators if private.
+        Notes:
+            Your code must be:
+                Thoroughly commented
+                Consistent with the design (diagrams should match the implemented model)
