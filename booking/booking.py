@@ -141,6 +141,10 @@ def cancel_booking(booking_id, user_id):
     conn.commit()
     conn.close()
 
+    # Dates just freed up, so tell anyone watching this car (Observer pattern)
+    from watchlist import CarSubject   # imported here since watchlist.py imports booking.py
+    CarSubject(b["car_id"]).notify_watchers()
+
 
 def complete_booking(booking_id, owner_id):
     # Owner marks the rental as finished once the car is returned.
