@@ -125,3 +125,89 @@ def get_cars_by_owner(owner_id):
     rows = conn.execute("SELECT * FROM cars WHERE owner_id = ?", (owner_id,)).fetchall()
     conn.close()
     return rows
+
+
+# ------------------------------------------------------------
+# Edit car (owner managing their listing)
+# Price drops and new dates tell the watchers (Observer pattern, watchlist.py)
+# ------------------------------------------------------------
+def _check_owner(conn, car_id, owner_id):
+    # Makes sure the car exists and belongs to this owner before editing
+    car = conn.execute("SELECT * FROM cars WHERE car_id = ?", (car_id,)).fetchone()
+    if car is None:
+        raise ValueError("Car not found")
+    if car["owner_id"] != owner_id:
+        raise ValueError("You can only edit your own car")
+    return car
+
+
+def update_price(car_id, owner_id, new_price):
+    # Owner changes the daily price. If it went down, watchers get checked.
+    if new_price <= 0:
+        raise ValueError("Price has to be more than 0")
+
+    conn = get_connection()
+    try:
+        car = _check_owner(conn, car_id, owner_id)
+        old_price = car["daily_price"]
+        conn.execute("UPDATE cars SET daily_price = ? WHERE car_id = ?", (new_price, car_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Only a price drop can help a watcher, so only notify then
+    if new_price < old_price:
+        from watchlist import CarSubject   # imported here so car.py doesn't need watchlist to load
+        CarSubject(car_id).notify_watchers()
+
+
+def add_car_availability(car_id, owner_id, available_from, available_to):
+    # Owner adds a new date range the car can be rented. Watchers get checked.
+    if available_to <= available_from:
+        raise ValueError("Availability end has to be after the start")
+
+    conn = get_connection()
+    try:
+        _check_owner(conn, car_id, owner_id)
+        conn.execute(
+            "INSERT INTO car_availability (car_id, available_from, available_to) VALUES (?, ?, ?)",
+            (car_id, available_from, available_to),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    from watchlist import CarSubject
+    CarSubject(car_id).notify_watchers()
+
+
+def remove_car_availability(car_id, owner_id, availability_id):
+    # Owner removes a date range
+    conn = get_connection()
+    try:
+        _check_owner(conn, car_id, owner_id)
+        conn.execute("DELETE FROM car_availability WHERE availability_id = ? AND car_id = ?",
+                     (availability_id, car_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_car_availability(car_id):
+    # All date ranges for a car, for the edit car page
+    conn = get_connection()
+    rows = conn.execute("SELECT * FROM car_availability WHERE car_id = ? ORDER BY available_from",
+                        (car_id,)).fetchall()
+    conn.close()
+    return rows
+
+
+def set_car_active(car_id, owner_id, active):
+    # Owner hides (False) or shows (True) their listing in search
+    conn = get_connection()
+    try:
+        _check_owner(conn, car_id, owner_id)
+        conn.execute("UPDATE cars SET is_active = ? WHERE car_id = ?", (1 if active else 0, car_id))
+        conn.commit()
+    finally:
+        conn.close()
