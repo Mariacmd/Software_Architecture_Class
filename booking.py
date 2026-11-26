@@ -10,11 +10,19 @@
 #
 # Main rule: the same car can't be booked by 2 people for overlapping dates.
 # Checked here first so we get a clear message, and the database trigger is a backup.
+#
+# The bottom of this file is Search: renters can search by any mix of these (all optional):
+# - location    (ex. "Dearborn", matches part of the pickup location)
+# - dates       (only shows cars that are available AND not booked for those dates)
+# - max price   (per day)
+# - min seats
+# - make        (ex. "Honda")
+# Results are sorted cheapest first.
 
 import math
 import sqlite3
 from datetime import datetime
-from database import get_connection
+from main import get_connection
 from notifications import send_notification
 
 DATE_FORMAT = "%Y-%m-%d %H:%M"   # dates look like "2026-12-01 09:00"
@@ -114,14 +122,14 @@ def create_booking(car_id, renter_id, start_time, end_time):
 
 def confirm_booking(booking_id, owner_id):
     # Owner accepts a pending booking. Renter gets notified.
-    _change_status(booking_id, owner_id, "pending", "confirmed", by_owner=True)
+    change_status(booking_id, owner_id, "pending", "confirmed")
 
 
 def cancel_booking(booking_id, user_id):
     # Owner or renter cancels before payment. Other person gets notified.
     # Cancelled bookings free up the dates again.
     conn = get_connection()
-    b = _get_booking_with_car(conn, booking_id)
+    b = get_booking_with_car(conn, booking_id)
     conn.close()
 
     if b is None:
@@ -135,37 +143,39 @@ def cancel_booking(booking_id, user_id):
     conn.execute("UPDATE bookings SET status = 'cancelled' WHERE booking_id = ?", (booking_id,))
 
     # Notify whoever didn't cancel
-    other = b["owner_id"] if user_id == b["renter_id"] else b["renter_id"]
-    send_notification(other, "booking",
+    if user_id == b["renter_id"]:
+        other_person = b["owner_id"]
+    else:
+        other_person = b["renter_id"]
+    send_notification(other_person, "booking",
                       f"Booking #{booking_id} for the {b['make']} {b['model']} was cancelled", conn)
     conn.commit()
     conn.close()
 
     # Dates just freed up, so tell anyone watching this car (Observer pattern)
-    from watchlist import CarSubject   # imported here since watchlist.py imports booking.py
+    from notifications import CarSubject   # imported here since notifications.py imports booking.py
     CarSubject(b["car_id"]).notify_watchers()
 
 
 def complete_booking(booking_id, owner_id):
     # Owner marks the rental as finished once the car is returned.
-    _change_status(booking_id, owner_id, "paid", "completed", by_owner=True)
+    change_status(booking_id, owner_id, "paid", "completed")
 
 
-def _change_status(booking_id, owner_id, from_status, to_status, by_owner):
+def change_status(booking_id, owner_id, from_status, to_status):
     # Shared code for confirm and complete. Checks it's the owner and the status is right.
     conn = get_connection()
-    b = _get_booking_with_car(conn, booking_id)
+    b = get_booking_with_car(conn, booking_id)
+    conn.close()
 
     if b is None:
-        conn.close()
         raise ValueError("Booking not found")
-    if by_owner and b["owner_id"] != owner_id:
-        conn.close()
+    if b["owner_id"] != owner_id:
         raise ValueError("Only the car owner can do this")
     if b["status"] != from_status:
-        conn.close()
         raise ValueError(f"Booking has to be {from_status} first")
 
+    conn = get_connection()
     conn.execute("UPDATE bookings SET status = ? WHERE booking_id = ?", (to_status, booking_id))
     send_notification(b["renter_id"], "booking",
                       f"Your booking for the {b['make']} {b['model']} is now {to_status}", conn)
@@ -173,7 +183,7 @@ def _change_status(booking_id, owner_id, from_status, to_status, by_owner):
     conn.close()
 
 
-def _get_booking_with_car(conn, booking_id):
+def get_booking_with_car(conn, booking_id):
     # Gets a booking plus the car's info and owner in one go
     return conn.execute(
         """SELECT b.*, c.make, c.model, c.owner_id
@@ -214,3 +224,68 @@ def get_owner_history(owner_id):
     ).fetchall()
     conn.close()
     return rows
+
+
+# ------------------------------------------------------------
+# Search (renter looking for a car by location, dates, price, seats or make)
+# Uses is_car_free() and is_in_availability() from the top of this file.
+# ------------------------------------------------------------
+def search_cars(location=None, start_time=None, end_time=None, max_price=None,
+                min_seats=None, make=None, renter_id=None):
+    # Returns a list of matching cars.
+    # renter_id is optional. If given, the renter's own cars are left out of the results.
+    if start_time is None and end_time is not None:
+        raise ValueError("Pick both a start and end date")
+    if start_time is not None and end_time is None:
+        raise ValueError("Pick both a start and end date")
+    if start_time is not None and end_time <= start_time:
+        raise ValueError("End date has to be after the start date")
+
+    # Build the SQL one filter at a time, only adding the ones the renter filled in
+    sql = "SELECT * FROM cars WHERE is_active = 1"
+    values = []
+
+    if location:
+        sql += " AND pickup_location LIKE ?"
+        values.append(f"%{location}%")      # % means "anything before or after"
+    if max_price is not None:
+        sql += " AND daily_price <= ?"
+        values.append(max_price)
+    if min_seats is not None:
+        sql += " AND seats >= ?"
+        values.append(min_seats)
+    if make:
+        sql += " AND make LIKE ?"
+        values.append(f"%{make}%")
+    if renter_id is not None:
+        sql += " AND owner_id <> ?"
+        values.append(renter_id)
+
+    sql += " ORDER BY daily_price ASC"
+
+    conn = get_connection()
+    cars = conn.execute(sql, values).fetchall()
+
+    # Date check can't be done in one simple query, so check each car after
+    if start_time is not None:
+        free_cars = []
+        for car in cars:
+            if is_in_availability(conn, car["car_id"], start_time, end_time) and is_car_free(conn, car["car_id"], start_time, end_time):
+                free_cars.append(car)
+        cars = free_cars
+
+    conn.close()
+    return cars
+
+
+def get_car(car_id):
+    # Gets one car's full info, for the car details page
+    conn = get_connection()
+    car = conn.execute(
+        """SELECT c.*, u.full_name AS owner_name
+           FROM cars c JOIN users u ON c.owner_id = u.user_id
+           WHERE c.car_id = ?""",
+        (car_id,),
+    ).fetchone()
+    conn.close()
+    return car

@@ -1,41 +1,59 @@
-# watchlist.py
-# Watchlist for DriveShare. Uses the Observer pattern.
-#
-# Why Observer: renters want to know when a car they like gets cheaper or frees up.
-# Instead of renters checking over and over, the car tells them when something changes.
-#
-# 3 parts:
-# 1. Observer       = the shared "shape", every watcher has update()
-# 2. RenterWatcher  = a renter watching one car, with their price and/or dates
-# 3. CarSubject     = the car being watched. Keeps a list of watchers and calls
-#                     update() on all of them when the car changes (notify_watchers)
-#
-# What triggers notify_watchers():
-# - Owner lowers the price            (car.py, update_price)
-# - Owner adds new available dates    (car.py, add_car_availability)
-# - A booking gets cancelled          (booking.py, cancel_booking)
-#
-# Each watcher checks if the change matches what the renter wanted.
-# Only then does the renter get a notification.
+# notifications.py
+# Saves in-app notifications for users. Booking, payment, and watchlist all use this.
+# This is so every part of the app sends notifications the same way.
+
 
 from abc import ABC, abstractmethod
-from database import get_connection
-from notifications import send_notification
-from booking import is_car_free, is_in_availability
+from main import get_connection
 
 
-# ------------------------------------------------------------
-# 1. Observer: what every watcher has to have
-# ------------------------------------------------------------
+def send_notification(user_id, type, message, conn=None):
+    # Adds a notification for a user.
+    # type is one of: booking, payment, watchlist, message, review
+    # conn is optional. If the caller is already in the middle of saving something,
+
+    own_conn = conn is None
+    if own_conn:
+        conn = get_connection()
+
+    conn.execute(
+        "INSERT INTO notifications (user_id, type, message) VALUES (?, ?, ?)",
+        (user_id, type, message),
+    )
+
+    if own_conn:
+        conn.commit()
+        conn.close()
+
+
+def get_notifications(user_id, unread_only=False):
+    # Gets a user's notifications, newest first. Used for the notifications page.
+    conn = get_connection()
+    sql = "SELECT * FROM notifications WHERE user_id = ?"
+    if unread_only:
+        sql += " AND is_read = 0"
+    sql += " ORDER BY notification_id DESC"
+    rows = conn.execute(sql, (user_id,)).fetchall()
+    conn.close()
+    return rows
+
+
+def mark_all_read(user_id):
+    # Marks all of a user's notifications as read once they open the page.
+    conn = get_connection()
+    conn.execute("UPDATE notifications SET is_read = 1 WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+# observer what every watcher has
 class Observer(ABC):
     @abstractmethod
     def update(self, car, conn):
         pass
 
 
-# ------------------------------------------------------------
-# 2. RenterWatcher: one renter watching one car
-# ------------------------------------------------------------
+# renter watcher
 class RenterWatcher(Observer):
     def __init__(self, renter_id, max_price=None, desired_from=None, desired_to=None):
         self.renter_id = renter_id
@@ -50,13 +68,19 @@ class RenterWatcher(Observer):
             return
 
         # Check price, if the renter set one
-        price_ok = self.max_price is None or car["daily_price"] <= self.max_price
+        price_ok = True
+        if self.max_price is not None and car["daily_price"] > self.max_price:
+            price_ok = False
 
         # Check dates, if the renter set them. Car has to be available AND not booked.
         dates_ok = True
         if self.desired_from is not None:
-            dates_ok = (is_in_availability(conn, car["car_id"], self.desired_from, self.desired_to)
-                        and is_car_free(conn, car["car_id"], self.desired_from, self.desired_to))
+            # imported here since booking.py imports this file
+            from booking import is_car_free, is_in_availability
+            if not is_in_availability(conn, car["car_id"], self.desired_from, self.desired_to):
+                dates_ok = False
+            if not is_car_free(conn, car["car_id"], self.desired_from, self.desired_to):
+                dates_ok = False
 
         if price_ok and dates_ok:
             message = f"A car you're watching matches what you wanted: {car['year']} {car['make']} {car['model']}, ${car['daily_price']:.2f}/day"
@@ -65,10 +89,7 @@ class RenterWatcher(Observer):
             send_notification(self.renter_id, "watchlist", message, conn)
 
 
-# ------------------------------------------------------------
-# 3. CarSubject: the car being watched
-# Watchers are saved in the watchlist table so they're still there after the app closes.
-# ------------------------------------------------------------
+#  car subject or the car being watched
 class CarSubject:
     def __init__(self, car_id):
         self.car_id = car_id
@@ -94,7 +115,10 @@ class CarSubject:
     def get_watchers(self, conn):
         # Loads everyone watching this car from the database as RenterWatcher objects
         rows = conn.execute("SELECT * FROM watchlist WHERE car_id = ?", (self.car_id,)).fetchall()
-        return [RenterWatcher(r["renter_id"], r["max_price"], r["desired_from"], r["desired_to"]) for r in rows]
+        watchers = []
+        for r in rows:
+            watchers.append(RenterWatcher(r["renter_id"], r["max_price"], r["desired_from"], r["desired_to"]))
+        return watchers
 
     def notify_watchers(self):
         # Car changed, tell every watcher. Each one decides if it matters to them.
@@ -107,14 +131,14 @@ class CarSubject:
         conn.close()
 
 
-# ------------------------------------------------------------
-# Functions the GUI uses
-# ------------------------------------------------------------
+#functions the gui uses
 def watch_car(renter_id, car_id, max_price=None, desired_from=None, desired_to=None):
     # Renter starts watching a car. Needs at least a price or dates to watch for.
     if max_price is None and desired_from is None:
         raise ValueError("Set a max price or dates to watch for")
-    if (desired_from is None) != (desired_to is None):
+    if desired_from is None and desired_to is not None:
+        raise ValueError("Set both a start and end date")
+    if desired_from is not None and desired_to is None:
         raise ValueError("Set both a start and end date")
     if desired_from is not None and desired_to <= desired_from:
         raise ValueError("End date has to be after the start date")

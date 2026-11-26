@@ -7,7 +7,7 @@
 # Ratings are 1 to 5 stars, comment is optional.
 # Each person can only review once per booking.
 
-from database import get_connection
+from main import get_connection
 from notifications import send_notification
 
 
